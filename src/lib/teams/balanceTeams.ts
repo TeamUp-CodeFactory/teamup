@@ -1,0 +1,192 @@
+import type { Team, MinStudentMode } from '@/types';
+import { assignStudent, removeStudent } from './manager';
+import { findGroupConflict } from './conflictResolver';
+import { getConfiguredSubjectMinimum, getUpperLimitForSubjectInTeam, countStudentsWithSubject } from './utils';
+
+/**
+ * Performs a final balancing pass to try and move students.
+ * 1. Moves students from teams exceeding configured minimums for a subject to teams that are below that minimum.
+ * 2. Moves students from teams exceeding the upper limit (min+1) for a subject to other valid teams.
+ */
+export function finalBalancing(
+    teams: Team[],
+    teamSubjectGroupCommitment: Map<number, Map<string, string>>,
+    selectedSubjects: string[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+) {
+    let moved, passCount = 0;
+    const MAX_PASSES = teams.length * selectedSubjects.length * 3;
+
+    do {
+        moved = moveStudentsToMeetMinimums(teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents);
+        passCount++;
+    } while (moved && passCount < MAX_PASSES);
+
+    let movedUpper, upperPassCount = 0;
+    const MAX_UPPER_PASSES = teams.length * selectedSubjects.length;
+    do {
+        movedUpper = moveStudentsToRespectUpperLimits(teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents);
+        upperPassCount++;
+    } while (movedUpper && upperPassCount < MAX_UPPER_PASSES);
+
+    if (passCount >= MAX_PASSES || upperPassCount >= MAX_UPPER_PASSES) {
+        console.warn(`Final balancing may have hit MAX_PASSES (P1: ${passCount}, P2: ${upperPassCount}). Further optimization might be possible.`);
+    }
+}
+
+function canMoveWithoutBreakingOtherMinimums(
+    student: any,
+    team: Team,
+    selectedSubjects: string[],
+    subject: string,
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    for (const otherSubj of selectedSubjects) {
+        if (otherSubj === subject) continue;
+        if (student.Materias.some(ssg => ssg.subject === otherSubj)) {
+            const otherSubjMin = getConfiguredSubjectMinimum(otherSubj, minMode, globalMinStudents, individualMinStudents);
+            const countOtherInSourceAfterMove = team.students.filter(st => st.ID !== student.ID && st.Materias.some(ssg_1 => ssg_1.subject === otherSubj)).length;
+            if (countOtherInSourceAfterMove < otherSubjMin) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function canMoveWithoutBreakingThisOrOtherMinimums(
+    student: any,
+    team: Team,
+    selectedSubjects: string[],
+    subject: string,
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>,
+    countInSource: number
+): boolean {
+    if ((countInSource - 1) < getConfiguredSubjectMinimum(subject, minMode, globalMinStudents, individualMinStudents)) {
+        return false;
+    }
+    return canMoveWithoutBreakingOtherMinimums(student, team, selectedSubjects, subject, minMode, globalMinStudents, individualMinStudents);
+}
+
+function canPlaceInTargetForOtherSubjects(
+    student: any,
+    targetTeam: Team,
+    selectedSubjects: string[],
+    subject: string,
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    for (const sg_student of student.Materias) {
+        if (selectedSubjects.includes(sg_student.subject) && sg_student.subject !== subject) {
+            const targetCountOther = countStudentsWithSubject(targetTeam, sg_student.subject);
+            const minOther = getConfiguredSubjectMinimum(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
+            const upperLimitOther = getUpperLimitForSubjectInTeam(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
+            if (targetCountOther >= minOther && (targetCountOther + 1) > upperLimitOther) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function moveStudentsToMeetMinimums(
+    teams: Team[],
+    teamSubjectGroupCommitment: Map<number, Map<string, string>>,
+    selectedSubjects: string[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    let moved = false;
+    for (const subject of selectedSubjects) {
+        const configuredMin = getConfiguredSubjectMinimum(subject, minMode, globalMinStudents, individualMinStudents);
+        for (const sourceTeam of teams) {
+            let studentsInSourceForSubject = sourceTeam.students.filter(s =>
+                s.Materias.some(sg => sg.subject === subject)
+            );
+            let countInSource = studentsInSourceForSubject.length;
+
+            while (countInSource > configuredMin) {
+                const studentToMove = studentsInSourceForSubject
+                    .sort((a, b) => a.Materias.length - b.Materias.length)
+                    .find(s => canMoveWithoutBreakingOtherMinimums(s, sourceTeam, selectedSubjects, subject, minMode, globalMinStudents, individualMinStudents));
+                if (!studentToMove) break;
+
+                const potentialTargetTeams = teams
+                    .filter(t => t.id !== sourceTeam.id)
+                    .sort((a, b) => countStudentsWithSubject(a, subject) - countStudentsWithSubject(b, subject));
+
+                let foundTarget = false;
+                for (const targetTeam of potentialTargetTeams) {
+                    const countInTarget = countStudentsWithSubject(targetTeam, subject);
+                    const upperLimitTarget = getUpperLimitForSubjectInTeam(subject, minMode, globalMinStudents, individualMinStudents);
+
+                    if (countInTarget < configuredMin || (countInTarget === configuredMin && countInTarget < upperLimitTarget)) {
+                        const conflict = findGroupConflict(studentToMove, targetTeam, teamSubjectGroupCommitment);
+                        if (!conflict && canPlaceInTargetForOtherSubjects(studentToMove, targetTeam, selectedSubjects, subject, minMode, globalMinStudents, individualMinStudents)) {
+                            removeStudent(studentToMove, sourceTeam, teamSubjectGroupCommitment, selectedSubjects);
+                            assignStudent(studentToMove, targetTeam, teamSubjectGroupCommitment, selectedSubjects);
+                            moved = true;
+                            foundTarget = true;
+                            studentsInSourceForSubject = sourceTeam.students.filter(s => s.Materias.some(sg => sg.subject === subject));
+                            countInSource = studentsInSourceForSubject.length;
+                            break;
+                        }
+                    }
+                }
+                if (!foundTarget) break;
+            }
+        }
+    }
+    return moved;
+}
+
+function moveStudentsToRespectUpperLimits(
+    teams: Team[],
+    teamSubjectGroupCommitment: Map<number, Map<string, string>>,
+    selectedSubjects: string[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    let moved = false;
+    for (const subject of selectedSubjects) {
+        const upperLimit = getUpperLimitForSubjectInTeam(subject, minMode, globalMinStudents, individualMinStudents);
+        for (const sourceTeam of teams) {
+            let countInSource = countStudentsWithSubject(sourceTeam, subject);
+
+            while (countInSource > upperLimit) {
+                const studentToMove = sourceTeam.students
+                    .filter(s => s.Materias.some(sg => sg.subject === subject))
+                    .find(s => canMoveWithoutBreakingThisOrOtherMinimums(s, sourceTeam, selectedSubjects, subject, minMode, globalMinStudents, individualMinStudents, countInSource));
+                if (!studentToMove) break;
+
+                const potentialDestinations = teams
+                    .filter(t => t.id !== sourceTeam.id && countStudentsWithSubject(t, subject) < upperLimit)
+                    .sort((a, b) => countStudentsWithSubject(a, subject) - countStudentsWithSubject(b, subject));
+
+                let movedThisStudent = false;
+                for (const destTeam of potentialDestinations) {
+                    const conflict = findGroupConflict(studentToMove, destTeam, teamSubjectGroupCommitment);
+                    if (!conflict && canPlaceInTargetForOtherSubjects(studentToMove, destTeam, selectedSubjects, subject, minMode, globalMinStudents, individualMinStudents)) {
+                        removeStudent(studentToMove, sourceTeam, teamSubjectGroupCommitment, selectedSubjects);
+                        assignStudent(studentToMove, destTeam, teamSubjectGroupCommitment, selectedSubjects);
+                        moved = true;
+                        movedThisStudent = true;
+                        countInSource = countStudentsWithSubject(sourceTeam, subject);
+                        break;
+                    }
+                }
+                if (!movedThisStudent) break;
+            }
+        }
+    }
+    return moved;
+}
