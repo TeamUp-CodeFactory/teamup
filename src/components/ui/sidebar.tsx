@@ -8,9 +8,10 @@ interface SidebarProps {
     children?: React.ReactNode;
     onDownloadTemplate?: () => void;
     hasStudents?: boolean;
+    hasTeams?: boolean;
 }
 
-export function Sidebar({ children, onDownloadTemplate, hasStudents }: SidebarProps) {
+export function Sidebar({ children, onDownloadTemplate, hasStudents , hasTeams}: SidebarProps) {
     const [selectedMenu, setSelectedMenu] = useState("inicio");
 
     return (
@@ -33,16 +34,25 @@ export function Sidebar({ children, onDownloadTemplate, hasStudents }: SidebarPr
                     className={`text-left px-4 py-2 rounded-lg transition-colors font-semibold ${selectedMenu === "inicio" ? "bg-background " : "hover:bg-primary/10 text-foreground"}`}
                     onClick={() => setSelectedMenu("inicio")}
                 >
-                    Crea un equipo
+                    Crea un equipos
                 </button>
-                { hasStudents && (
-                <button
-                    className={`text-left px-4 py-2 rounded-lg transition-colors ${selectedMenu === "equipos" ? "bg-background  font-semibold" : "hover:bg-primary/10 text-foreground"}`}
-                    onClick={() => setSelectedMenu("equipos")}
-                >
-                    Consulta tus equipos
-                </button>)
+                {hasStudents && (
+                    <button
+                        className={`text-left px-4 py-2 rounded-lg transition-colors ${selectedMenu === "estudiantes" ? "bg-background  font-semibold" : "hover:bg-primary/10 text-foreground"}`}
+                        onClick={() => setSelectedMenu("estudiantes")}
+                    >
+                        Estudiantes
+                    </button>)
                 }
+                {hasTeams && (
+                    <button
+                        className={`text-left px-4 py-2 rounded-lg transition-colors ${selectedMenu === "equipos" ? "bg-background  font-semibold" : "hover:bg-primary/10 text-foreground"}`}
+                        onClick={() => setSelectedMenu("equipos")}
+                    >
+                        Equipos
+                    </button>)
+                }
+                
                 <button
                     className={`text-left px-4 py-2 rounded-lg transition-colors ${selectedMenu === "plantilla" ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-primary/10 text-foreground"}`}
                     onClick={() => onDownloadTemplate?.()

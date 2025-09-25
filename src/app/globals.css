@@ -47,8 +47,8 @@ body {
     --chart-4: 0 0% 70%;   /* Medium Gray */
     --chart-5: 180 50% 50%; /* Muted Teal */
 
-    --sidebar-grad-from: 157 47% 91%;
-    --sidebar-grad-to: 116 100% 80%;
+    --sidebar-grad-from: 157 47% 91%;/* Green intense*/
+    --sidebar-grad-to: 116 100% 80%;/*Lighter green*/
 
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
