@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Toaster } from "@/components/ui/toaster";
+import { Sidebar } from "@/components/ui/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -93,6 +94,7 @@ export default function Home() {
   const [minMode, setMinMode] = useState<MinStudentMode>('global');
   const [individualMinStudents, setIndividualMinStudents] = useState<Record<string, number>>({});
   const { toast } = useToast();
+  const hasStudents = students.length > 0;
 
   // Downloads the Excel template.
   const handleTemplate = useCallback(() => {
@@ -360,19 +362,19 @@ export default function Home() {
 
   // Rendering
   return (
-    <div className="container mx-auto p-4 md:p-8 min-h-screen bg-secondary">
-      <Toaster />
-      <header className="mb-8 flex gap-2">
-        <Zap className="h-10 w-10 text-primary" />
-        <h1 className="text-3xl font-bold text-primary mb-2">TeamUp</h1>
-      </header>
-      {/* Initial screen with full width file upload card */}
-      {students.length === 0 && (
-        <Card className="shadow-sm w-full md:w-2/3 md:mx-auto">
+    <>
+      {/* Sidebar fija visible en todas las pantallas */}
+      <Sidebar onDownloadTemplate={handleTemplate}/>
+      {/* Contenido principal */}
+      <div className="ml-[305px] container mx-auto flex flex-col p-4 md:p-8 min-h-screen bg-secondary">
+        <Toaster />
+        {/* Initial screen with full width file upload card */}
+        { !hasStudents && (
+        <main className="flex-1 flex justify-center items-center bg-secondary">
+        <Card className="shadow-sm  w-full md:w-2/3 mx-auto shadow-2xl">
           <CardHeader>
             <CardTitle className="text-2xl font-semibold flex items-center justify-center gap-2 text-center">
-              <Sparkles className="text-primary" />
-              Bienvenid@ ¡comencemos!
+              Bienvenid@ ¡Comencemos!
             </CardTitle>
             <CardDescription className="text-sm text-muted-foreground text-center">
               Para empezar debes cargar un archivo de Excel con el listado de estudiantes. Asegúrate que contenga las siguientes columnas: ID, Nombre completo, Correo electrónico, Materias y Grupos.
@@ -385,7 +387,7 @@ export default function Home() {
                 fileName && "border-primary bg-primary/10"
               )}>
                 <span className="flex items-center space-x-2 text-center">
-                  <FileUp className="h-6 w-6 text-primary" />
+                  <FileUp className="h-6 w-6 " />
                   <span className="font-medium text-foreground">
                     {fileName ? `${fileName}` : 'Haz clic o arrastra para subir un archivo'}
                   </span>
@@ -398,30 +400,24 @@ export default function Home() {
                   className="sr-only"
                 />
               </Label>
-              <p className="text-xs text-end text-muted-foreground mt-1">
+              <p className="text-xs text-center text-muted-foreground mt-1">
                 Solo se permiten archivos .xlsx
-              </p>
-              <Button onClick={handleTemplate} variant="outline" size="sm" className="flex items-center gap-1 ml-2 hover:bg-primary/10 hover:text-primary">
-                <FileDown className="h-4 w-4" /> Descargar plantilla de Excel
-              </Button>
-              <p className="text-xs text-muted-foreground ml-2">
-                Con esta plantilla puedes cumplir la estructura requerida.
               </p>
             </div>
           </CardContent>
         </Card>
+        </main>
       )}
 
       {/* Main layout when students are loaded */}
-      {students.length > 0 && (
+      {hasStudents && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
           {/* Configuration Column */}
           <div className="md:col-span-1 space-y-6">
-            {/* Card for File Upload */}
             <Card className="shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <File className="text-primary" />
+                  <File className="text-accent" />
                   Cargar archivo
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
@@ -773,7 +769,10 @@ export default function Home() {
           </div>
         </div>
       )}
-      <p className="text-center text-sm text-muted-foreground mt-8">Copyright © 2025 Julian Vanegas López</p>
+      <footer className="py-6 text-center text-sm text-muted-foreground mt-8">
+    Copyright © 2025 Julian Vanegas López
+  </footer>
     </div>
+    </>
   );
 }

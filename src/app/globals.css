@@ -1,17 +1,20 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
+/*@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap');
+*/
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Mulish',Arial, Helvetica, sans-serif;
 }
 
 @layer base {
   :root {
+    --font-sans: 'Caveat', cursive, Arial, Helvetica, sans-serif;
+
     --background: 0 0% 100%; /* White */
     --foreground: 240 10% 3.9%; /* Dark Gray */
 
-    --card: 0 0% 100%; /* White */
+    --card: 116, 86%, 93%, 1; /* light green */
     --card-foreground: 240 10% 3.9%; /* Dark Gray */
 
     --popover: 0 0% 100%; /* White */
@@ -36,13 +39,16 @@ body {
     --input: 0 0% 89.8%; /* Light Gray input */
     --ring: 44.7 100% 50%; /* Amber (#FFBF00) */
 
-    --radius: 0.5rem;
+    --radius: 2.4rem;
 
     --chart-1: 180 100% 25.1%; /* Teal */
     --chart-2: 207 56.5% 75.5%; /* Lighter Soft Blue */
     --chart-3: 45 100% 60%; /* Lighter Amber */
     --chart-4: 0 0% 70%;   /* Medium Gray */
     --chart-5: 180 50% 50%; /* Muted Teal */
+
+    --sidebar-grad-from: 157 47% 91%;
+    --sidebar-grad-to: 116 100% 80%;
 
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
@@ -88,6 +94,9 @@ body {
     --chart-3: 45 100% 55%; /* Mid Amber */
     --chart-4: 0 0% 50%; /* Medium Gray */
     --chart-5: 180 50% 60%; /* Muted Teal */
+
+    --sidebar-grad-from: 157 30% 15%;  /* gradiante  */
+    --sidebar-grad-to: 116 40% 25%;
 
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
