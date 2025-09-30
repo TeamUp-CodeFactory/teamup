@@ -138,3 +138,43 @@ export const findRoleForSubject = (subject: string, roles: Role[]): Role | undef
 export const getRolesForStudent = (student: Student, roles: Role[]): Role[] => {
     return roles.filter(role => canStudentFulfillRole(student, role));
 };
+
+/**
+ * Validates a set of roles to ensure they are properly configured.
+ * @param roles Array of roles to validate.
+ * @returns Object with validation result and error messages.
+ */
+export const validateRoles = (roles: Role[]): { valid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    
+    if (roles.length === 0) {
+        errors.push("No hay roles configurados");
+        return { valid: false, errors };
+    }
+    
+    roles.forEach((role, index) => {
+        // Check if role has a name
+        if (!role.name || role.name.trim() === '') {
+            errors.push(`El rol ${index + 1} no tiene nombre`);
+        }
+        
+        // Check if role has subjects
+        if (!role.subjects || role.subjects.length === 0) {
+            errors.push(`El rol "${role.name}" no tiene materias asignadas`);
+        }
+        
+        // Check if minimum students is valid
+        if (!role.minimumStudents || role.minimumStudents < 0) {
+            errors.push(`El rol "${role.name}" tiene un mínimo de estudiantes inválido`);
+        }
+    });
+    
+    // Check for duplicate role names
+    const roleNames = roles.map(r => r.name.trim().toLowerCase()).filter(name => name !== '');
+    const duplicateNames = roleNames.filter((name, index) => roleNames.indexOf(name) !== index);
+    if (duplicateNames.length > 0) {
+        errors.push(`Nombres de roles duplicados: ${[...new Set(duplicateNames)].join(', ')}`);
+    }
+    
+    return { valid: errors.length === 0, errors };
+};

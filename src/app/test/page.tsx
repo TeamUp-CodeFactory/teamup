@@ -30,9 +30,10 @@ import {
 import { 
   canStudentFulfillRole, 
   countStudentsWithRole as countRoleStudents, 
-  getConfiguredRoleMinimum
+  getConfiguredRoleMinimum,
+  validateRoles
 } from '@/lib/teams/roleUtils';
-import { validateRoles, getRoleStatistics, getStudentsForRole } from '@/lib/roleExamples';
+import { getStudentsForRole } from '@/lib/teams/utils';
 import { cn } from "@/lib/utils";
 
 // Helper: Count students with specific subject in a team.
