@@ -1,10 +1,20 @@
-import type { Student, Team, AssignmentWarning, MinStudentMode } from '@/types';
-import { assignStudent } from './manager';
+import type { Student, Team, AssignmentWarning, MinStudentMode, Role } from '@/types';
+import { assignStudent, canAssignStudentToTeam } from './manager';
 import { localSearch } from './localSearch';
-import { findGroupConflict, tryResolveConflict } from './conflictResolver';
 import { determineOrderAllocation } from './orderAllocation';
 import { finalBalancing } from './balanceTeams';
-import { getConfiguredSubjectMinimum, getUpperLimitForSubjectInTeam, countStudentsWithSubject } from './utils';
+import { 
+    transformRolesToVirtualSubjects,
+    transformRoleMinimums,
+    transformResultBackToRoles,
+    getVirtualSubjectsFromMapping
+} from './roleToSubjectTransform';
+import { 
+    getConfiguredSubjectMinimum, 
+    getUpperLimitForSubjectInTeam, 
+    countStudentsWithSubject,
+    getCompatibleStudentsForTeam
+} from './utils';
 
 export function allocateTeams(
     allStudents: Student[],
@@ -16,8 +26,13 @@ export function allocateTeams(
 ): { teams: Team[]; warnings: AssignmentWarning[] } {
     const assignmentWarnings: AssignmentWarning[] = [];
 
+    // Filter students to include only those who have at least one selected subject
+    const relevantStudents = allStudents.filter(student => 
+        student.Materias.some(sg => selectedSubjects.includes(sg.subject))
+    );
+
     const effectiveTeamCalc = determineOrderAllocation(
-        allStudents, selectedSubjects, userRequestedNumberOfTeams, minMode, globalMinStudents, individualMinStudents
+        relevantStudents, selectedSubjects, userRequestedNumberOfTeams, minMode, globalMinStudents, individualMinStudents
     );
 
     if (!effectiveTeamCalc || effectiveTeamCalc.effectiveNumberOfTeams <= 0) {
@@ -38,7 +53,7 @@ export function allocateTeams(
     const teamSubjectGroupCommitment = new Map<number, Map<string, string>>();
 
     // Fase 1: Asignar mínimos obligatorios por materia (más escasas primero)
-    const studentsSortedByConstraint = [...allStudents].sort((a, b) => a.Materias.length - b.Materias.length);
+    const studentsSortedByConstraint = [...relevantStudents].sort((a, b) => a.Materias.length - b.Materias.length);
 
     assignMinimumsBySubject(
         teams,
@@ -65,7 +80,7 @@ export function allocateTeams(
     );
 
     // Fase 3: Optimización post-asignación
-    const averageTeamSize = allStudents.filter(s => assignedStudentIDs.has(s.ID)).length / effectiveNumberOfTeams;
+    const averageTeamSize = relevantStudents.filter(s => assignedStudentIDs.has(s.ID)).length / effectiveNumberOfTeams;
     if (effectiveNumberOfTeams > 0) {
        localSearch(teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents, averageTeamSize);
        finalBalancing(teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents);
@@ -86,7 +101,7 @@ export function allocateTeams(
         });
     }
 
-    const finalUnassignedStudents = allStudents.filter(s => !assignedStudentIDs.has(s.ID));
+    const finalUnassignedStudents = relevantStudents.filter(s => !assignedStudentIDs.has(s.ID));
     if (finalUnassignedStudents.length > 0) {
         assignmentWarnings.push({
             message: `Hay ${finalUnassignedStudents.length} estudiante(s) sin asignar: ${finalUnassignedStudents.map(s => `(${s.ID}) ${s['Nombre completo']}`).join(', ')}.`,
@@ -151,9 +166,50 @@ export function allocateTeams(
     return { teams, warnings: assignmentWarnings };
 }
 
+/**
+ * Role-based allocation using virtual subject transformation.
+ * This function transforms roles into virtual subjects, uses the existing allocateTeams
+ * algorithm, and then transforms the results back to preserve role information.
+ */
+export function allocateTeamsByRoles(
+    allStudents: Student[],
+    selectedRoles: Role[],
+    userRequestedNumberOfTeams: number,
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinRoles: Record<string, number>
+): { teams: Team[]; warnings: AssignmentWarning[] } {
+    // Step 1: Transform roles to virtual subjects
+    const { virtualStudents, mapping } = transformRolesToVirtualSubjects(allStudents, selectedRoles);
+    
+    // Step 2: Transform role minimums to virtual subject minimums
+    const { virtualMinMode, virtualGlobalMin, virtualIndividualMin } = transformRoleMinimums(
+        minMode,
+        globalMinStudents,
+        individualMinRoles,
+        mapping
+    );
+    
+    // Step 3: Get virtual subjects list
+    const virtualSubjects = getVirtualSubjectsFromMapping(mapping);
+    
+    // Step 4: Use existing allocateTeams algorithm with virtual data
+    const result = allocateTeams(
+        virtualStudents as any[], // TypeScript compatibility
+        virtualSubjects,
+        userRequestedNumberOfTeams,
+        virtualMinMode,
+        virtualGlobalMin,
+        virtualIndividualMin
+    );
+    
+    // Step 5: Transform results back to roles
+    return transformResultBackToRoles(result.teams, result.warnings, mapping, allStudents);
+}
 
 /**
  * Assigns students to teams to satisfy minimum requirements for each subject, prioritizing subjects with stricter constraints.
+ * Now prevents course conflicts by only assigning compatible students.
  */
 function assignMinimumsBySubject(
     teams: Team[],
@@ -177,30 +233,30 @@ function assignMinimumsBySubject(
             let studentsInTeamForSubject = countStudentsWithSubject(team, subject);
             let needed = configuredMin - studentsInTeamForSubject;
 
-            for (let i = 0; i < needed && availableStudentsForSubject.length > 0; ) {
-                const studentToAttemptIndex = availableStudentsForSubject.findIndex(s => !assignedStudentIDs.has(s.ID));
-                if (studentToAttemptIndex === -1) break;
+            // Get students that can be safely assigned to this team (no course conflicts)
+            const compatibleStudents = getCompatibleStudentsForTeam(team, availableStudentsForSubject);
 
-                const studentToAttempt = availableStudentsForSubject.splice(studentToAttemptIndex, 1)[0];
+            for (let i = 0; i < needed && compatibleStudents.length > 0; i++) {
+                // Find a compatible student for this subject
+                const studentIndex = compatibleStudents.findIndex(s => 
+                    !assignedStudentIDs.has(s.ID) && s.Materias.some(sg => sg.subject === subject)
+                );
+                
+                if (studentIndex === -1) break;
 
-                const conflict = findGroupConflict(studentToAttempt, team, teamSubjectGroupCommitment);
-                if (!conflict) {
-                    assignStudent(studentToAttempt, team, teamSubjectGroupCommitment, selectedSubjects);
-                    assignedStudentIDs.add(studentToAttempt.ID);
-                    i++;
-                } else {
-                    if (tryResolveConflict(studentToAttempt, team, conflict.subject, conflict.group, teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents)) {
-                        const recheckConflict = findGroupConflict(studentToAttempt, team, teamSubjectGroupCommitment);
-                        if(!recheckConflict) {
-                            assignStudent(studentToAttempt, team, teamSubjectGroupCommitment, selectedSubjects);
-                            assignedStudentIDs.add(studentToAttempt.ID);
-                            i++;
-                        } else {
-                            availableStudentsForSubject.push(studentToAttempt);
-                        }
-                    } else {
-                        availableStudentsForSubject.push(studentToAttempt);
+                const studentToAssign = compatibleStudents.splice(studentIndex, 1)[0];
+                
+                // Assign the student (this should always succeed since we checked compatibility)
+                const success = assignStudent(studentToAssign, team, teamSubjectGroupCommitment, selectedSubjects);
+                if (success) {
+                    assignedStudentIDs.add(studentToAssign.ID);
+                    // Remove from available students list
+                    const availableIndex = availableStudentsForSubject.indexOf(studentToAssign);
+                    if (availableIndex !== -1) {
+                        availableStudentsForSubject.splice(availableIndex, 1);
                     }
+                } else {
+                    console.error(`Failed to assign compatible student ${studentToAssign['Nombre completo']} to team ${team.id}`);
                 }
             }
         }
@@ -208,7 +264,8 @@ function assignMinimumsBySubject(
 }
 
 /**
- * Assigns remaining students after initial minimum assignments, trying to respect upper limits and resolve conflicts.
+ * Assigns remaining students after initial minimum assignments, trying to respect upper limits.
+ * Now prevents course conflicts by only assigning compatible students.
  */
 function assignRemainingStudents(
     teams: Team[],
@@ -226,40 +283,37 @@ function assignRemainingStudents(
     for (const student of remainingStudents) {
         if (assignedStudentIDs.has(student.ID)) continue;
 
+        // Sort teams by size to maintain balance
         teams.sort((a,b) => a.students.length - b.students.length);
 
         for (const team of teams) {
-            const conflict = findGroupConflict(student, team, teamSubjectGroupCommitment);
-            let canAssign = !conflict;
-
-            if (conflict) {
-                 if (tryResolveConflict(student, team, conflict.subject, conflict.group, teams, teamSubjectGroupCommitment, selectedSubjects, minMode, globalMinStudents, individualMinStudents)) {
-                     const recheckConflict = findGroupConflict(student, team, teamSubjectGroupCommitment);
-                     canAssign = !recheckConflict;
-                 } else {
-                    canAssign = false;
-                 }
+            // Check if student can be assigned without course conflicts
+            if (!canAssignStudentToTeam(student, team)) {
+                continue; // Skip this team due to course conflicts
             }
 
-            if (canAssign) {
-                let violatesUpperLimit = false;
-                for (const sg_student of student.Materias) {
-                    if (selectedSubjects.includes(sg_student.subject)) {
-                        const currentCountInTeam = countStudentsWithSubject(team, sg_student.subject);
-                        const minForSubject = getConfiguredSubjectMinimum(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
-                        const upperLimitForSubject = getUpperLimitForSubjectInTeam(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
+            // Check upper limits for each subject
+            let violatesUpperLimit = false;
+            for (const sg_student of student.Materias) {
+                if (selectedSubjects.includes(sg_student.subject)) {
+                    const currentCountInTeam = countStudentsWithSubject(team, sg_student.subject);
+                    const minForSubject = getConfiguredSubjectMinimum(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
+                    const upperLimitForSubject = getUpperLimitForSubjectInTeam(sg_student.subject, minMode, globalMinStudents, individualMinStudents);
 
-                        if (currentCountInTeam >= minForSubject && (currentCountInTeam + 1) > upperLimitForSubject) {
-                            violatesUpperLimit = true;
-                            break;
-                        }
+                    if (currentCountInTeam >= minForSubject && (currentCountInTeam + 1) > upperLimitForSubject) {
+                        violatesUpperLimit = true;
+                        break;
                     }
                 }
+            }
 
-                if (!violatesUpperLimit) {
-                    assignStudent(student, team, teamSubjectGroupCommitment, selectedSubjects);
+            if (!violatesUpperLimit) {
+                const success = assignStudent(student, team, teamSubjectGroupCommitment, selectedSubjects);
+                if (success) {
                     assignedStudentIDs.add(student.ID);
                     break;
+                } else {
+                    console.error(`Failed to assign student ${student['Nombre completo']} to team ${team.id} despite compatibility checks`);
                 }
             }
         }

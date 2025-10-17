@@ -1,5 +1,6 @@
-import type { Student, MinStudentMode } from '@/types';
+import type { Student, MinStudentMode, Role } from '@/types';
 import { getConfiguredSubjectMinimum, getStudentsForSubject, getCriticalSubjectWarning, getMaxTeams, getSortedSubjects } from './utils';
+import { getConfiguredRoleMinimum } from './roleUtils';
 
 /**
  * Calculates the effective number of teams that can be formed and the order of subjects for assignment.
@@ -60,5 +61,100 @@ export const determineOrderAllocation = (
     const sortedSubjectList = getSortedSubjects(selectedSubjects, allStudents);
 
     return { effectiveNumberOfTeams, sortedSubjectList };
+};
+
+// ===== ROLE-BASED EQUIVALENTS =====
+
+/**
+ * Determines the effective number of teams that can be formed based on role requirements
+ * and student availability, similar to determineOrderAllocation but for roles.
+ */
+export const determineOrderAllocationForRoles = (
+    allStudents: any[],
+    selectedRoles: Role[],
+    userRequestedNumberOfTeams: number,
+    minMode: any,
+    globalMinStudents: number,
+    individualMinRoles: Record<string, number>
+): { 
+    effectiveNumberOfTeams: number; 
+    sortedRoleList: Role[]; 
+    criticalWarning?: string;
+    warnings?: string[];
+} => {
+    if (!selectedRoles || selectedRoles.length === 0) {
+        return { effectiveNumberOfTeams: userRequestedNumberOfTeams, sortedRoleList: [] };
+    }
+
+    // Calculate maximum possible teams based on role constraints
+    let maxSystemPossibleTeams = Infinity;
+    let bottleneckRole: Role | null = null;
+
+    for (const role of selectedRoles) {
+        const studentsForRole = getStudentsForRole(role.id, allStudents, selectedRoles);
+        const configuredMin = getConfiguredRoleMinimumForOrder(role.id, minMode, globalMinStudents, individualMinRoles);
+        
+        if (configuredMin > 0) {
+            const possibleTeamsForThisRole = Math.floor(studentsForRole.length / configuredMin);
+            if (possibleTeamsForThisRole < maxSystemPossibleTeams) {
+                maxSystemPossibleTeams = possibleTeamsForThisRole;
+                bottleneckRole = role;
+            }
+        }
+    }
+
+    const effectiveNumberOfTeams = Math.max(0, Math.min(userRequestedNumberOfTeams, maxSystemPossibleTeams));
+
+    if (effectiveNumberOfTeams <= 0 && selectedRoles.length > 0) {
+        return {
+            effectiveNumberOfTeams: 0,
+            sortedRoleList: selectedRoles,
+            criticalWarning: `No es posible formar ningún equipo que cumpla todos los mínimos de roles seleccionados con los estudiantes disponibles. El rol '${bottleneckRole?.name}' limita la formación a ${maxSystemPossibleTeams} equipos.`
+        };
+    }
+
+    const sortedRoleList = getSortedRoles(selectedRoles, allStudents);
+
+    return { effectiveNumberOfTeams, sortedRoleList };
+};
+
+/**
+ * Gets students that can fulfill a specific role
+ */
+export const getStudentsForRole = (roleId: string, allStudents: any[], allRoles: Role[]): any[] => {
+    const role = allRoles.find(r => r.id === roleId);
+    if (!role) return [];
+    
+    return allStudents.filter(student => 
+        student.Materias && student.Materias.some((subjectGroup: any) => 
+            role.subjects.includes(subjectGroup.subject)
+        )
+    );
+};
+
+/**
+ * Gets the configured minimum for a role for order allocation purposes
+ */
+export const getConfiguredRoleMinimumForOrder = (
+    roleId: string,
+    minMode: any,
+    globalMinStudents: number,
+    individualMinRoles: Record<string, number>
+): number => {
+    if (minMode === 'individual' && individualMinRoles[roleId] !== undefined) {
+        return individualMinRoles[roleId];
+    }
+    return globalMinStudents;
+};
+
+/**
+ * Sorts roles by student availability (ascending) to prioritize constrained roles
+ */
+export const getSortedRoles = (selectedRoles: Role[], allStudents: any[]): Role[] => {
+    return [...selectedRoles].sort((a, b) => {
+        const studentsA = getStudentsForRole(a.id, allStudents, selectedRoles).length;
+        const studentsB = getStudentsForRole(b.id, allStudents, selectedRoles).length;
+        return studentsA - studentsB;
+    });
 };
 

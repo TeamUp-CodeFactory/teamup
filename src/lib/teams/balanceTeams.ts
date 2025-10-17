@@ -1,7 +1,14 @@
-import type { Team, MinStudentMode } from '@/types';
+import type { Team, MinStudentMode, Role } from '@/types';
 import { assignStudent, removeStudent } from './manager';
 import { findGroupConflict } from './conflictResolver';
-import { getConfiguredSubjectMinimum, getUpperLimitForSubjectInTeam, countStudentsWithSubject } from './utils';
+import { getConfiguredSubjectMinimum, getUpperLimitForSubjectInTeam, countStudentsWithSubject, calculateRoleMoveScore } from './utils';
+import { 
+    canStudentFulfillRole, 
+    countStudentsWithRole, 
+    getConfiguredRoleMinimum,
+    getUpperLimitForRoleInTeam,
+    wouldCreateRoleGroupConflict
+} from './roleUtils';
 
 /**
  * Performs a final balancing pass to try and move students.
@@ -36,6 +43,38 @@ export function finalBalancing(
     }
 }
 
+/**
+ * Performs a final balancing pass for role-based allocation.
+ * Similar to finalBalancing but works with roles instead of subjects.
+ */
+export function finalBalancingForRoles(
+    teams: Team[],
+    teamRoleGroupCommitment: Map<number, Map<string, string>>,
+    selectedRoles: Role[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinRoles: Record<string, number>
+) {
+    let moved, passCount = 0;
+    const MAX_PASSES = teams.length * selectedRoles.length * 3;
+
+    do {
+        moved = moveStudentsToMeetRoleMinimums(teams, teamRoleGroupCommitment, selectedRoles, minMode, globalMinStudents, individualMinRoles);
+        passCount++;
+    } while (moved && passCount < MAX_PASSES);
+
+    let movedUpper, upperPassCount = 0;
+    const MAX_UPPER_PASSES = teams.length * selectedRoles.length;
+    do {
+        movedUpper = moveStudentsToRespectRoleUpperLimits(teams, teamRoleGroupCommitment, selectedRoles, minMode, globalMinStudents, individualMinRoles);
+        upperPassCount++;
+    } while (movedUpper && upperPassCount < MAX_UPPER_PASSES);
+
+    if (passCount >= MAX_PASSES || upperPassCount >= MAX_UPPER_PASSES) {
+        console.warn(`Final role balancing may have hit MAX_PASSES (P1: ${passCount}, P2: ${upperPassCount}). Further optimization might be possible.`);
+    }
+}
+
 function canMoveWithoutBreakingOtherMinimums(
     student: any,
     team: Team,
@@ -47,9 +86,9 @@ function canMoveWithoutBreakingOtherMinimums(
 ): boolean {
     for (const otherSubj of selectedSubjects) {
         if (otherSubj === subject) continue;
-        if (student.Materias.some(ssg => ssg.subject === otherSubj)) {
+        if (student.Materias.some((ssg: any) => ssg.subject === otherSubj)) {
             const otherSubjMin = getConfiguredSubjectMinimum(otherSubj, minMode, globalMinStudents, individualMinStudents);
-            const countOtherInSourceAfterMove = team.students.filter(st => st.ID !== student.ID && st.Materias.some(ssg_1 => ssg_1.subject === otherSubj)).length;
+            const countOtherInSourceAfterMove = team.students.filter(st => st.ID !== student.ID && st.Materias.some((ssg_1: any) => ssg_1.subject === otherSubj)).length;
             if (countOtherInSourceAfterMove < otherSubjMin) {
                 return false;
             }
@@ -189,4 +228,193 @@ function moveStudentsToRespectUpperLimits(
         }
     }
     return moved;
+}
+
+// =====================
+// Role-based balancing
+// =====================
+
+/**
+ * Performs a final balancing pass for role-based assignments.
+ * 1. Moves students from teams exceeding configured minimums for a role to teams that are below that minimum.
+ * 2. Moves students from teams exceeding the upper limit (min+1) for a role to other valid teams.
+ */
+export function finalRoleBalancing(
+    teams: Team[],
+    teamRoleGroupCommitment: Map<number, Map<string, string>>,
+    selectedRoles: Role[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+) {
+    let moved, passCount = 0;
+    const MAX_PASSES = teams.length * selectedRoles.length * 3;
+
+    do {
+        moved = moveStudentsToMeetRoleMinimums(teams, teamRoleGroupCommitment, selectedRoles, minMode, globalMinStudents, individualMinStudents);
+        passCount++;
+    } while (moved && passCount < MAX_PASSES);
+
+    let movedUpper, upperPassCount = 0;
+    const MAX_UPPER_PASSES = teams.length * selectedRoles.length;
+    do {
+        movedUpper = moveStudentsToRespectRoleUpperLimits(teams, teamRoleGroupCommitment, selectedRoles, minMode, globalMinStudents, individualMinStudents);
+        upperPassCount++;
+    } while (movedUpper && upperPassCount < MAX_UPPER_PASSES);
+
+    if (passCount >= MAX_PASSES || upperPassCount >= MAX_UPPER_PASSES) {
+        console.warn(`Final role balancing may have hit MAX_PASSES (P1: ${passCount}, P2: ${upperPassCount}). Further optimization might be possible.`);
+    }
+}
+
+function canMoveWithoutBreakingOtherRoleMinimums(
+    student: any,
+    team: Team,
+    selectedRoles: Role[],
+    excludeRole: Role,
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    for (const otherRole of selectedRoles) {
+        if (otherRole.id === excludeRole.id) continue;
+        if (canStudentFulfillRole(student, otherRole)) {
+            const currentCount = countStudentsWithRole(team, otherRole);
+            const configuredMin = getConfiguredRoleMinimum(otherRole, minMode, globalMinStudents, individualMinStudents);
+            if (currentCount - 1 < configuredMin) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function moveStudentsToMeetRoleMinimums(
+    teams: Team[],
+    teamRoleGroupCommitment: Map<number, Map<string, string>>,
+    selectedRoles: Role[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    let moved = false;
+
+    for (const role of selectedRoles) {
+        const configuredMin = getConfiguredRoleMinimum(role, minMode, globalMinStudents, individualMinStudents);
+
+        const teamsNeedingMore = teams.filter(team => countStudentsWithRole(team, role) < configuredMin);
+        const teamsWithSurplus = teams.filter(team => countStudentsWithRole(team, role) > configuredMin);
+
+        for (const needyTeam of teamsNeedingMore) {
+            const neededCount = configuredMin - countStudentsWithRole(needyTeam, role);
+
+            for (const surplusTeam of teamsWithSurplus) {
+                const availableStudents = surplusTeam.students.filter(student =>
+                    canStudentFulfillRole(student, role) &&
+                    canMoveWithoutBreakingOtherRoleMinimums(student, surplusTeam, selectedRoles, role, minMode, globalMinStudents, individualMinStudents)
+                );
+
+                let movedFromThisTeam = 0;
+                for (const studentToMove of availableStudents) {
+                    if (movedFromThisTeam >= neededCount) break;
+
+                    if (!wouldCreateRoleGroupConflict(studentToMove, needyTeam, role)) {
+                        removeStudentFromRole(studentToMove, surplusTeam, role, teamRoleGroupCommitment);
+                        assignStudentToRole(studentToMove, needyTeam, role, teamRoleGroupCommitment);
+                        moved = true;
+                        movedFromThisTeam++;
+                    }
+                }
+
+                if (movedFromThisTeam >= neededCount) break;
+            }
+        }
+    }
+
+    return moved;
+}
+
+function moveStudentsToRespectRoleUpperLimits(
+    teams: Team[],
+    teamRoleGroupCommitment: Map<number, Map<string, string>>,
+    selectedRoles: Role[],
+    minMode: MinStudentMode,
+    globalMinStudents: number,
+    individualMinStudents: Record<string, number>
+): boolean {
+    let moved = false;
+
+    for (const role of selectedRoles) {
+        const upperLimit = getUpperLimitForRoleInTeam(role, minMode, globalMinStudents, individualMinStudents);
+
+        for (const sourceTeam of teams) {
+            let countInSource = countStudentsWithRole(sourceTeam, role);
+
+            while (countInSource > upperLimit) {
+                const studentsForRole = sourceTeam.students.filter(student =>
+                    canStudentFulfillRole(student, role) &&
+                    canMoveWithoutBreakingOtherRoleMinimums(student, sourceTeam, selectedRoles, role, minMode, globalMinStudents, individualMinStudents)
+                );
+
+                if (studentsForRole.length === 0) break;
+
+                const studentToMove = studentsForRole[0];
+                const potentialDestinations = teams
+                    .filter(team => team.id !== sourceTeam.id && countStudentsWithRole(team, role) < upperLimit)
+                    .sort((a, b) => countStudentsWithRole(a, role) - countStudentsWithRole(b, role));
+
+                let movedThisStudent = false;
+                for (const destTeam of potentialDestinations) {
+                    if (!wouldCreateRoleGroupConflict(studentToMove, destTeam, role)) {
+                        removeStudentFromRole(studentToMove, sourceTeam, role, teamRoleGroupCommitment);
+                        assignStudentToRole(studentToMove, destTeam, role, teamRoleGroupCommitment);
+                        moved = true;
+                        movedThisStudent = true;
+                        countInSource = countStudentsWithRole(sourceTeam, role);
+                        break;
+                    }
+                }
+                if (!movedThisStudent) break;
+            }
+        }
+    }
+    return moved;
+}
+
+function removeStudentFromRole(
+    student: any,
+    team: Team,
+    role: Role,
+    teamRoleGroupCommitment: Map<number, Map<string, string>>
+) {
+    const index = team.students.findIndex(s => s.ID === student.ID);
+    if (index !== -1) {
+        team.students.splice(index, 1);
+        // Update role commitment if no other students fulfill this role
+        if (countStudentsWithRole(team, role) === 0) {
+            const roleCommitments = teamRoleGroupCommitment.get(team.id);
+            if (roleCommitments) {
+                roleCommitments.delete(role.id);
+            }
+        }
+    }
+}
+
+function assignStudentToRole(
+    student: any,
+    team: Team,
+    role: Role,
+    teamRoleGroupCommitment: Map<number, Map<string, string>>
+) {
+    team.students.push(student);
+    
+    // Get the subject-group that covers this role for the student
+    const studentSubjectGroup = student.Materias.find((sg: any) => role.subjects.includes(sg.subject));
+    if (studentSubjectGroup) {
+        if (!teamRoleGroupCommitment.has(team.id)) {
+            teamRoleGroupCommitment.set(team.id, new Map());
+        }
+        const roleCommitments = teamRoleGroupCommitment.get(team.id)!;
+        roleCommitments.set(role.id, studentSubjectGroup.group);
+    }
 }
