@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo } from 'react';
 import type { Student, Team, AssignmentWarning, MinStudentMode } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { parseStudentExcel } from '@/lib/file_management/excelProcessor';
-import { exportTeamsToExcel } from '@/lib/file_management/excelExporter';
+import { exportTeamsToExcel, exportTeamsOnlyToExcel } from '@/lib/file_management/excelExporter';
 import { allocateTeams } from '@/lib/teams/allocator';
 import { getConfiguredSubjectMinimum } from '@/lib/teams/utils';
 
@@ -282,6 +282,33 @@ export const useTeamBuilder = () => {
     }
   }, [generatedTeams, students, selectedSubjects, warnings, fileName, minMode, minStudentsPerSubject, individualMinStudents, unassignedStudents.length, toast]);
 
+  // Exporta SOLO los equipos generados (sin listado completo de estudiantes)
+  const handleExportTeamsOnly = useCallback(async () => {
+    if (generatedTeams.length === 0) {
+      toast({ title: "Error", description: "No hay equipos para exportar.", variant: "destructive" });
+      return;
+    }
+    try {
+      const blob = exportTeamsOnlyToExcel(
+        generatedTeams,
+        selectedSubjects,
+        fileName
+      );
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = (fileName ? fileName.replace(/\.xlsx?$/, '') : 'equipos') + '_equipos.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+      toast({ title: "Éxito", description: "Equipos exportados correctamente." });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Ocurrió un error al exportar.";
+      setError(message);
+      toast({ title: "Error", description: message, variant: "destructive" });
+    }
+  }, [generatedTeams, selectedSubjects, fileName, toast]);
+
   // =================================================================
   // 4. VALORES DE RETORNO (RETURN VALUES)
   // El hook devuelve un objeto con todos los estados y funciones que
@@ -317,6 +344,7 @@ export const useTeamBuilder = () => {
     handleSubjectToggle,
     handleIndividualMinChange,
     handleGlobalMinChange,
-  handleExport,
+    handleExport,
+    handleExportTeamsOnly,
   };
 };

@@ -188,7 +188,83 @@ export function exportTeamsToExcel(
         ];
         XLSX.utils.book_append_sheet(wb, wsAsignaciones, "Asignaciones");
 
-        // --- Sheet 2: Resumen por Equipo (Role-based or Subject-based) ---
+        // --- Sheet 2: Equipos Generados (detalle de cada equipo) ---
+        const teamsDetailData: any[] = [
+            ["Equipo", "ID", "Nombre completo", "Correo electrónico", "Materias y grupos"]
+        ];
+
+        generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
+            // Add team header row
+            teamsDetailData.push([
+                `Equipo ${team.id}`,
+                "",
+                "",
+                "",
+                `${team.students.length} estudiante${team.students.length !== 1 ? 's' : ''}`
+            ]);
+
+            // Add students in the team
+            team.students.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsDetailData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
+            });
+
+            // Add empty row between teams
+            teamsDetailData.push(["", "", "", "", ""]);
+        });
+
+        // Add unassigned students section if any
+        if (unassignedStudentsToExport.length > 0) {
+            teamsDetailData.push([
+                "Estudiantes Sin Asignar",
+                "",
+                "",
+                "",
+                `${unassignedStudentsToExport.length} estudiante${unassignedStudentsToExport.length !== 1 ? 's' : ''}`
+            ]);
+
+            unassignedStudentsToExport.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsDetailData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
+            });
+        }
+
+        const wsTeamsDetail = XLSX.utils.aoa_to_sheet(teamsDetailData);
+        
+        // Set column widths
+        wsTeamsDetail['!cols'] = [
+            { wch: 25 },  // Equipo
+            { wch: 12 },  // ID
+            { wch: 30 },  // Nombre completo
+            { wch: 35 },  // Correo electrónico
+            { wch: 60 }   // Materias y grupos
+        ];
+
+        XLSX.utils.book_append_sheet(wb, wsTeamsDetail, "Equipos");
+
+        // --- Sheet 3: Resumen por Equipo (Role-based or Subject-based) ---
         if (isRoleBased && selectedRoles) {
             // Role-based summary
             const sortedRoles = [...selectedRoles].sort((a, b) => a.name.localeCompare(b.name));
@@ -286,7 +362,7 @@ export function exportTeamsToExcel(
             XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen por Equipo");
         }
 
-        // --- Sheet 3: Advertencias ---
+        // --- Sheet 4: Advertencias ---
         if (warnings.length > 0) {
             // Check if any warning has role information
             const hasRoleInfo = warnings.some(w => w.role !== undefined);
@@ -388,4 +464,91 @@ export function exportRoleBasedTeamsToExcel(
         individualMins,
         selectedRoles // Pass roles as the optional parameter
     );
+}
+
+/**
+ * Exports only the generated teams (without full student list) to Excel.
+ * This is a simplified export that shows only team compositions.
+ * 
+ * @param generatedTeams The list of generated teams with their assigned students.
+ * @param selectedSubjects The list of subjects considered during assignment.
+ * @param originalFileName The name of the original uploaded file (optional).
+ * @returns A Blob representing the generated Excel file with only team data.
+ */
+export function exportTeamsOnlyToExcel(
+    generatedTeams: Team[],
+    selectedSubjects: string[],
+    originalFileName: string | null
+): Blob {
+    if (generatedTeams.length === 0) {
+        throw new Error("No hay equipos para exportar.");
+    }
+
+    try {
+        const wb = XLSX.utils.book_new();
+
+        // --- Sheet: Equipos Generados ---
+        const teamsData: any[] = [
+            ["Equipo", "ID", "Nombre completo", "Correo electrónico", "Materias y grupos"]
+        ];
+
+        generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
+            // Add team header row
+            teamsData.push([
+                `Equipo ${team.id}`,
+                "",
+                "",
+                "",
+                `${team.students.length} estudiante${team.students.length !== 1 ? 's' : ''}`
+            ]);
+
+            // Add students in the team
+            team.students.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
+            });
+
+            // Add empty row between teams
+            teamsData.push(["", "", "", "", ""]);
+        });
+
+        const wsTeams = XLSX.utils.aoa_to_sheet(teamsData);
+        
+        // Set column widths
+        wsTeams['!cols'] = [
+            { wch: 12 },  // Equipo
+            { wch: 12 },  // ID
+            { wch: 30 },  // Nombre completo
+            { wch: 35 },  // Correo electrónico
+            { wch: 60 }   // Materias y grupos
+        ];
+
+        XLSX.utils.book_append_sheet(wb, wsTeams, "Equipos");
+
+        // --- Generate Blob ---
+        const baseFileName = originalFileName ? originalFileName.replace(/\.xlsx?$/, '') : 'equipos';
+        const outputFileName = `${baseFileName}_equipos.xlsx`;
+
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        return new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    } catch (err) {
+        console.error("Error generating Excel export:", err);
+        if (err instanceof Error) {
+            throw new Error(`Error al generar el archivo Excel: ${err.message}`);
+        } else {
+            throw new Error("Ocurrió un error desconocido al generar el archivo Excel.");
+        }
+    }
 }

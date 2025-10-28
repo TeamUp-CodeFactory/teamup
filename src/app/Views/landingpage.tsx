@@ -1,120 +1,57 @@
 "use client";
 
 import type React from "react";
-import type {Team} from '@/types';
-import {useCallback,} from "react";
+import {useCallback,useEffect,} from "react";
 import { Toaster } from "@/components/ui/toaster";
-import { Sidebar } from "@/components/ui/sidebar";
 import { StudentUploader } from "@/app/Views/student-uploader";
 import { generateExcelTemplate } from '@/lib/file_management/excelTemplate';
 import { useTeamBuilder } from '@/hooks/use-team-builder';
-import { StudentsMainLayout } from "./students-layout";
 
+interface LandingPageProps {
+  teamBuilderState: ReturnType<typeof useTeamBuilder>;
+}
 
-
-export default function Landingpage() {
-  // Main application states.
+export default function Landingpage({ teamBuilderState }: LandingPageProps) {
+  // Usar el estado que viene del padre
   const {
-    students,
     fileName,
-    allSubjectsFromFile,
-    selectedSubjects,
-    minStudentsPerSubject,
-    numberOfTeams,
-    generatedTeams,
-    error,
-    warnings,
-    minMode,
-    individualMinStudents,
-    unassignedStudents,
     hasStudents,
-    hasTeams,
     toast,
-    setError,
     handleFileUpload,
-    setGeneratedTeams,
-    setWarnings,
-    handleAssignTeams,
-    handleClearData,
-    handleNumberOfTeamsChange,
-    handleSubjectToggle,
-    handleIndividualMinChange,
-    handleGlobalMinChange,
-    handleExport,
-    setMinMode,
-  // getDisplayMinimumForSubject, // No longer needed as prop
-  } = useTeamBuilder();
+  } = teamBuilderState;
 
-
-  // Downloads the Excel template.
-  const handleTemplate = useCallback(() => {
-    const templateBlob = generateExcelTemplate();
-    const url = window.URL.createObjectURL(templateBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'listado_estudiantes.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-    toast({ title: "Éxito", description: "La plantilla de se ha descargado correctamente." });
-  }, [
-    toast
-  ]);
-
-  // Rendering
   return (
-    <>
-      {/* Sidebar fija visible en todas las pantallas */}
-      <Sidebar key={`${hasStudents}-${hasTeams}`} // Fuerza re-renderizado al cambiar hasStudents
-        onDownloadTemplate={handleTemplate} // Fun para descargar plantilla
-        hasStudents={hasStudents} // Indica si hay estudiantes cargados
-        hasTeams={hasTeams}
-        /> 
-      {/* Contenido principal */}
-      <div className="ml-[305px] container mx-auto flex flex-col p-4 md:p-8 min-h-screen bg-secondary">
-        <Toaster />
-        {/* Initial screen with full width file upload card */}
+    <div className="flex min-h-screen overflow-x-hidden">
+      {/* Contenido principal: background full-viewport */}
+      <main className="min-h-screen flex-1 bg-figma-surface flex items-center justify-center overflow-x-hidden">
+        {/* content area to the right of the sidebar; center its children. */}
+        <div className="w-full max-w-4xl px-4 md:px-8 text-figma-text">
+            <Toaster />
+        {/* Initial screen with hero section + file upload card */}
         {!hasStudents && (
-          <main className="flex-1 flex justify-center items-center bg-secondary">
+          <div className="flex flex-col items-center justify-center space-y-8 py-12">
+            {/* Hero section */}
+            <div className="text-center space-y-4 max-w-2xl">
+              <h1 className="text-hero-title font-bold tracking-tight text-figma-primary">
+                ¡Bienvenido!
+              </h1>
+              <p className="text-hero-subtitle tracking-tight text-figma-muted-text">
+                Comienza a crear equipos
+              </p>
+              <p className="text-hero-description text-muted-foreground px-4">
+                El primer paso es subir un archivo de Excel (.xlsx) con la información de los estudiantes. Verifica que el listado contenga obligatoriamente las siguientes columnas: <span className="font-semibold">ID</span>, <span className="font-semibold">Nombre completo</span>, <span className="font-semibold">Correo electrónico</span>, <span className="font-semibold">Materias</span>, <span className="font-semibold">Grupos</span>. Para facilitar este proceso, puedes descargar la plantilla y lista para llenar.
+              </p>
+            </div>
+            
+            {/* File upload card */}
             <StudentUploader fileName={fileName} handleFileUpload={handleFileUpload}/>
-          </main>
-        )}
-
-        {/* Main layout when students are loaded */}
-        {hasStudents && (
-          <StudentsMainLayout
-            fileName={fileName}
-            error={error}
-            handleFileUpload={handleFileUpload}
-            students={students}
-            numberOfTeams={numberOfTeams}
-            handleNumberOfTeamsChange={handleNumberOfTeamsChange}
-            handleClearData={handleClearData}
-            handleSubjectToggle={handleSubjectToggle}
-            generatedTeams={generatedTeams}
-            allSubjectsFromFile={allSubjectsFromFile}
-            selectedSubjects={selectedSubjects}
-            minMode={minMode}
-            setMinMode={setMinMode}
-            handleExport={handleExport}
-            minStudentsPerSubject={minStudentsPerSubject}
-            individualMinStudents={individualMinStudents}
-            handleGlobalMinChange={handleGlobalMinChange}
-            handleIndividualMinChange={handleIndividualMinChange}
-            setGeneratedTeams={setGeneratedTeams}
-            setWarnings={setWarnings}
-            setError={setError}
-            handleAssignTeams={handleAssignTeams}
-            warnings={warnings}
-            // getDisplayMinimumForSubject and countStudentsWithSubject removed from props
-            unassignedStudents={unassignedStudents}
-          />
+          </div>
         )}
         <footer className="py-6 text-center text-sm text-muted-foreground mt-8">
           Copyright © 2025 Julian Vanegas López
         </footer>
       </div>
-    </>
+      </main>
+    </div>
   );
 }

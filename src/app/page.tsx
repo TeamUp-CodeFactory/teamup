@@ -1,12 +1,6 @@
 "use client";
-import  Landingpage  from "./Views/landingpage";
-import { useState } from "react";
+import AppLayout from "./Views/app-layout";
 
 export default function Home() {
-  
-
-  // Rendering
-  return (
-    <><Landingpage /></>
-  );
+  return <AppLayout />;
 }
