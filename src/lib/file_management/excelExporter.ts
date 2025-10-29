@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { Student, Team, AssignmentWarning, MinStudentMode, SubjectGroup } from '@/types';
+import type { Student, Team, AssignmentWarning, MinStudentMode, SubjectGroup, Role } from '@/types';
 import { getConfiguredSubjectMinimum } from '../teams/utils'; // Import helpers
 
 /**
@@ -14,16 +14,61 @@ const countStudentsWithSubject = (team: Team, subject: string): number => {
 };
 
 /**
+ * Counts the total number of students in a team who can fulfill a specific role.
+ * @param team The team to check.
+ * @param role The role to count.
+ * @returns The total count of students who can fulfill that role.
+ */
+const countStudentsWithRole = (team: Team, role: Role): number => {
+    return team.students.filter(s => 
+        s.Materias.some(sg => role.subjects.includes(sg.subject))
+    ).length;
+};
+
+/**
+ * Gets all roles that a student can fulfill based on their enrolled subjects.
+ * @param student The student to check.
+ * @param roles The list of available roles.
+ * @returns Array of role names the student can fulfill.
+ */
+const getStudentRoles = (student: Student, roles: Role[]): string[] => {
+    return roles
+        .filter(role => student.Materias.some(sg => role.subjects.includes(sg.subject)))
+        .map(role => role.name);
+};
+
+/**
+ * Gets the configured minimum students for a role based on the minimum mode.
+ * @param role The role to check.
+ * @param minMode The minimum student mode.
+ * @param globalMin The global minimum value.
+ * @param individualMins The individual minimums map.
+ * @returns The configured minimum for this role.
+ */
+const getConfiguredRoleMinimum = (
+    role: Role, 
+    minMode: MinStudentMode, 
+    globalMin: number, 
+    individualMins: Record<string, number>
+): number => {
+    if (minMode === 'individual') {
+        return individualMins[role.id] ?? role.minimumStudents;
+    }
+    return globalMin;
+};
+
+/**
  * Generates an Excel workbook (as a blob) containing team assignments and summaries.
  *
  * @param generatedTeams The list of generated teams with their assigned students.
  * @param allStudents The original list of all students (used to find unassigned ones).
- * @param selectedSubjects The list of subjects considered during assignment.
+ * @param selectedSubjects The list of subjects considered during assignment (empty when using roles).
  * @param warnings A list of warnings and errors generated during assignment.
  * @param originalFileName The name of the original uploaded file (optional, for naming the export).
  * @param minMode The minimum student mode used ('global' or 'individual').
  * @param globalMin The global minimum value used.
  * @param individualMins The map of individual minimums used.
+ * @param selectedRoles Optional list of roles used in role-based assignment.
  * @returns A Blob representing the generated Excel file.
  * @throws Error if there are no teams to export or an error occurs during generation.
  */
@@ -35,12 +80,16 @@ export function exportTeamsToExcel(
     originalFileName: string | null,
     minMode: MinStudentMode,
     globalMin: number,
-    individualMins: Record<string, number>
+    individualMins: Record<string, number>,
+    selectedRoles?: Role[]
 ): Blob {
 
     if (generatedTeams.length === 0 && allStudents.length === 0) {
         throw new Error("No hay datos de equipos o estudiantes para exportar.");
     }
+
+    // Determine if we're using role-based or subject-based assignment
+    const isRoleBased = selectedRoles && selectedRoles.length > 0;
 
     try {
         const wb = XLSX.utils.book_new();
@@ -59,14 +108,30 @@ export function exportTeamsToExcel(
                     .map(sg => `${sg.subject} (${sg.group})`)
                     .join(", ");
 
-                allAssignedStudentsData.push([
+                // If working with roles, also get the roles this student can fulfill
+                let rolesStr = "";
+                if (isRoleBased && selectedRoles) {
+                    const studentRoles = getStudentRoles(student, selectedRoles);
+                    rolesStr = studentRoles.join(", ");
+                }
+
+                const row = [
                     student.ID,
                     student['Nombre completo'],
                     student['Correo electrónico'],
-                    allSubjectGroupsStr,
-                    relevantSubjectGroupsStr || "-",
-                    `Equipo ${team.id}`
-                ]);
+                    allSubjectGroupsStr
+                ];
+
+                // Add role-specific or subject-specific columns
+                if (isRoleBased) {
+                    row.push(rolesStr || "-");
+                } else {
+                    row.push(relevantSubjectGroupsStr || "-");
+                }
+
+                row.push(`Equipo ${team.id}`);
+
+                allAssignedStudentsData.push(row);
                 assignedIDs.add(student.ID);
             });
         });
@@ -77,20 +142,39 @@ export function exportTeamsToExcel(
             const allSubjectGroupsStr = student.Materias
                 .map(sg => `${sg.subject} (${sg.group})`)
                 .join(", ");
-            allAssignedStudentsData.push([
+
+            const row = [
                 student.ID,
                 student['Nombre completo'],
                 student['Correo electrónico'],
-                allSubjectGroupsStr,
-                "-",
-                "Sin asignar"
-            ]);
+                allSubjectGroupsStr
+            ];
+
+            // Add role-specific or subject-specific columns for unassigned students
+            if (isRoleBased && selectedRoles) {
+                const studentRoles = getStudentRoles(student, selectedRoles);
+                row.push(studentRoles.join(", ") || "-");
+            } else {
+                row.push("-");
+            }
+
+            row.push("Sin asignar");
+            allAssignedStudentsData.push(row);
         });
 
         allAssignedStudentsData.sort((a, b) => String(a[1]).localeCompare(String(b[1])));
 
+        // Create headers based on assignment type
+        const headers = ["ID", "Nombre completo", "Correo electrónico", "Materias (Matriculadas)"];
+        if (isRoleBased) {
+            headers.push("Roles Asignables");
+        } else {
+            headers.push("Materias (Seleccionadas)");
+        }
+        headers.push("Equipo asignado");
+
         const wsAsignacionesData = [
-            ["ID", "Nombre completo", "Correo electrónico", "Materias (Matriculadas)", "Materias (Seleccionadas)", "Equipo asignado"],
+            headers,
             ...allAssignedStudentsData
         ];
         const wsAsignaciones = XLSX.utils.aoa_to_sheet(wsAsignacionesData);
@@ -104,79 +188,357 @@ export function exportTeamsToExcel(
         ];
         XLSX.utils.book_append_sheet(wb, wsAsignaciones, "Asignaciones");
 
-        // --- Sheet 2: Resumen por Equipo ---
-        const sortedSubjects = [...selectedSubjects].sort();
-
-        const wsResumenData: any[] = [
-            ["No. Equipo", "Total de Estudiantes", "Recuento por Materia", ...Array(sortedSubjects.length - 1).fill(""), "Mínimo requerido por Materia", ...Array(sortedSubjects.length - 1).fill("")],
-            ["", "", ...sortedSubjects, ...sortedSubjects],
+        // --- Sheet 2: Equipos Generados (detalle de cada equipo) ---
+        const teamsDetailData: any[] = [
+            ["Equipo", "ID", "Nombre completo", "Correo electrónico", "Materias y grupos"]
         ];
 
         generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
-            const rowData: any[] = [
+            // Add team header row
+            teamsDetailData.push([
                 `Equipo ${team.id}`,
-                team.students.length
-            ];
+                "",
+                "",
+                "",
+                `${team.students.length} estudiante${team.students.length !== 1 ? 's' : ''}`
+            ]);
 
-            sortedSubjects.forEach(subject => {
-                rowData.push(countStudentsWithSubject(team, subject) || 0);
+            // Add students in the team
+            team.students.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsDetailData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
             });
 
-            sortedSubjects.forEach(subj => {
-                rowData.push(getConfiguredSubjectMinimum(subj, minMode, globalMin, individualMins));
-            });
-
-            wsResumenData.push(rowData);
+            // Add empty row between teams
+            teamsDetailData.push(["", "", "", "", ""]);
         });
-        const wsResumen = XLSX.utils.aoa_to_sheet(wsResumenData);
 
-        if (sortedSubjects.length > 0) {
-            const merges = [];
-            if (sortedSubjects.length > 0) {
-                merges.push({ s: { r: 0, c: 2 }, e: { r: 0, c: 1 + sortedSubjects.length } });
-                merges.push({ s: { r: 0, c: 2 + sortedSubjects.length }, e: { r: 0, c: 1 + sortedSubjects.length + sortedSubjects.length } });
-            }
-            wsResumen['!merges'] = merges;
+        // Add unassigned students section if any
+        if (unassignedStudentsToExport.length > 0) {
+            teamsDetailData.push([
+                "Estudiantes Sin Asignar",
+                "",
+                "",
+                "",
+                `${unassignedStudentsToExport.length} estudiante${unassignedStudentsToExport.length !== 1 ? 's' : ''}`
+            ]);
 
-            const colWidths = [
-                { wch: 15 },
-                { wch: 15 },
-                ...sortedSubjects.map(h => ({ wch: Math.max(15, h.length + 2) })),
-                ...sortedSubjects.map(h => ({ wch: Math.max(15, h.length + 2) }))
-            ];
-            wsResumen['!cols'] = colWidths;
-        } else {
-            wsResumen['!cols'] = [{ wch: 15 }, { wch: 15 }];
+            unassignedStudentsToExport.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsDetailData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
+            });
         }
 
-        XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen por Equipo");
+        const wsTeamsDetail = XLSX.utils.aoa_to_sheet(teamsDetailData);
+        
+        // Set column widths
+        wsTeamsDetail['!cols'] = [
+            { wch: 25 },  // Equipo
+            { wch: 12 },  // ID
+            { wch: 30 },  // Nombre completo
+            { wch: 35 },  // Correo electrónico
+            { wch: 60 }   // Materias y grupos
+        ];
 
-        // --- Sheet 3: Advertencias ---
+        XLSX.utils.book_append_sheet(wb, wsTeamsDetail, "Equipos");
+
+        // --- Sheet 3: Resumen por Equipo (Role-based or Subject-based) ---
+        if (isRoleBased && selectedRoles) {
+            // Role-based summary
+            const sortedRoles = [...selectedRoles].sort((a, b) => a.name.localeCompare(b.name));
+
+            const wsResumenData: any[] = [
+                ["No. Equipo", "Total de Estudiantes", "Recuento por Rol", ...Array(sortedRoles.length - 1).fill(""), "Mínimo requerido por Rol", ...Array(sortedRoles.length - 1).fill("")],
+                ["", "", ...sortedRoles.map(r => r.name), ...sortedRoles.map(r => r.name)],
+            ];
+
+            generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
+                const rowData: any[] = [
+                    `Equipo ${team.id}`,
+                    team.students.length
+                ];
+
+                // Count students per role
+                sortedRoles.forEach(role => {
+                    rowData.push(countStudentsWithRole(team, role) || 0);
+                });
+
+                // Add minimum requirements per role
+                sortedRoles.forEach(role => {
+                    rowData.push(getConfiguredRoleMinimum(role, minMode, globalMin, individualMins));
+                });
+
+                wsResumenData.push(rowData);
+            });
+
+            const wsResumen = XLSX.utils.aoa_to_sheet(wsResumenData);
+
+            if (sortedRoles.length > 0) {
+                const merges = [];
+                merges.push({ s: { r: 0, c: 2 }, e: { r: 0, c: 1 + sortedRoles.length } });
+                merges.push({ s: { r: 0, c: 2 + sortedRoles.length }, e: { r: 0, c: 1 + sortedRoles.length + sortedRoles.length } });
+                wsResumen['!merges'] = merges;
+
+                const colWidths = [
+                    { wch: 15 },
+                    { wch: 15 },
+                    ...sortedRoles.map(r => ({ wch: Math.max(15, r.name.length + 2) })),
+                    ...sortedRoles.map(r => ({ wch: Math.max(15, r.name.length + 2) }))
+                ];
+                wsResumen['!cols'] = colWidths;
+            } else {
+                wsResumen['!cols'] = [{ wch: 15 }, { wch: 15 }];
+            }
+
+            XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen por Roles");
+        } else {
+            // Subject-based summary (original logic)
+            const sortedSubjects = [...selectedSubjects].sort();
+
+            const wsResumenData: any[] = [
+                ["No. Equipo", "Total de Estudiantes", "Recuento por Materia", ...Array(sortedSubjects.length - 1).fill(""), "Mínimo requerido por Materia", ...Array(sortedSubjects.length - 1).fill("")],
+                ["", "", ...sortedSubjects, ...sortedSubjects],
+            ];
+
+            generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
+                const rowData: any[] = [
+                    `Equipo ${team.id}`,
+                    team.students.length
+                ];
+
+                sortedSubjects.forEach(subject => {
+                    rowData.push(countStudentsWithSubject(team, subject) || 0);
+                });
+
+                sortedSubjects.forEach(subj => {
+                    rowData.push(getConfiguredSubjectMinimum(subj, minMode, globalMin, individualMins));
+                });
+
+                wsResumenData.push(rowData);
+            });
+            const wsResumen = XLSX.utils.aoa_to_sheet(wsResumenData);
+
+            if (sortedSubjects.length > 0) {
+                const merges = [];
+                if (sortedSubjects.length > 0) {
+                    merges.push({ s: { r: 0, c: 2 }, e: { r: 0, c: 1 + sortedSubjects.length } });
+                    merges.push({ s: { r: 0, c: 2 + sortedSubjects.length }, e: { r: 0, c: 1 + sortedSubjects.length + sortedSubjects.length } });
+                }
+                wsResumen['!merges'] = merges;
+
+                const colWidths = [
+                    { wch: 15 },
+                    { wch: 15 },
+                    ...sortedSubjects.map(h => ({ wch: Math.max(15, h.length + 2) })),
+                    ...sortedSubjects.map(h => ({ wch: Math.max(15, h.length + 2) }))
+                ];
+                wsResumen['!cols'] = colWidths;
+            } else {
+                wsResumen['!cols'] = [{ wch: 15 }, { wch: 15 }];
+            }
+
+            XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen por Equipo");
+        }
+
+        // --- Sheet 4: Advertencias ---
         if (warnings.length > 0) {
+            // Check if any warning has role information
+            const hasRoleInfo = warnings.some(w => w.role !== undefined);
+            
+            let headers: string[];
+            if (hasRoleInfo) {
+                headers = ["No. Equipo", "Materia", "Rol", "Grupo", "Tipo", "Advertencia"];
+            } else {
+                headers = ["No. Equipo", "Materia", "Grupo", "Tipo", "Advertencia"];
+            }
+
             const warningsData = [
-                ["No. Equipo", "Materia", "Grupo", "Tipo", "Advertencia"],
-                ...warnings.map(w => [
-                    w.team ?? "N/A",
-                    w.subject ?? "N/A",
-                    w.group ?? "N/A",
-                    w.isCritical ? "CRÍTICO" : "Advertencia",
-                    w.message
-                ])
+                headers,
+                ...warnings.map(w => {
+                    const baseData = [
+                        w.team ?? "N/A",
+                        w.subject ?? "N/A"
+                    ];
+
+                    if (hasRoleInfo) {
+                        baseData.push(w.role ?? "N/A");
+                    }
+
+                    baseData.push(
+                        w.group ?? "N/A",
+                        w.isCritical ? "CRÍTICO" : "Advertencia",
+                        w.message
+                    );
+
+                    return baseData;
+                })
             ];
+
             const wsWarnings = XLSX.utils.aoa_to_sheet(warningsData);
-            wsWarnings['!cols'] = [
-                { wch: 10 },
-                { wch: 20 },
-                { wch: 10 },
-                { wch: 10 },
-                { wch: 100 }
-            ];
+            
+            let colWidths: any[];
+            if (hasRoleInfo) {
+                colWidths = [
+                    { wch: 10 }, // No. Equipo
+                    { wch: 20 }, // Materia
+                    { wch: 20 }, // Rol
+                    { wch: 10 }, // Grupo
+                    { wch: 10 }, // Tipo
+                    { wch: 100 } // Advertencia
+                ];
+            } else {
+                colWidths = [
+                    { wch: 10 }, // No. Equipo
+                    { wch: 20 }, // Materia
+                    { wch: 10 }, // Grupo
+                    { wch: 10 }, // Tipo
+                    { wch: 100 } // Advertencia
+                ];
+            }
+            
+            wsWarnings['!cols'] = colWidths;
             XLSX.utils.book_append_sheet(wb, wsWarnings, "Advertencias");
         }
 
         // --- Generate Blob ---
         const baseFileName = originalFileName ? originalFileName.replace(/\.xlsx?$/, '') : 'equipos';
         const outputFileName = `${baseFileName}_asignados.xlsx`;
+
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        return new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    } catch (err) {
+        console.error("Error generating Excel export:", err);
+        if (err instanceof Error) {
+            throw new Error(`Error al generar el archivo Excel: ${err.message}`);
+        } else {
+            throw new Error("Ocurrió un error desconocido al generar el archivo Excel.");
+        }
+    }
+}
+
+/**
+ * Convenience function for exporting teams generated using role-based allocation.
+ * This is a wrapper around exportTeamsToExcel that specifically handles role-based exports.
+ */
+export function exportRoleBasedTeamsToExcel(
+    generatedTeams: Team[],
+    allStudents: Student[],
+    selectedRoles: Role[],
+    warnings: AssignmentWarning[],
+    originalFileName: string | null,
+    minMode: MinStudentMode,
+    globalMin: number,
+    individualMins: Record<string, number>
+): Blob {
+    return exportTeamsToExcel(
+        generatedTeams,
+        allStudents,
+        [], // selectedSubjects is empty for role-based allocation
+        warnings,
+        originalFileName,
+        minMode,
+        globalMin,
+        individualMins,
+        selectedRoles // Pass roles as the optional parameter
+    );
+}
+
+/**
+ * Exports only the generated teams (without full student list) to Excel.
+ * This is a simplified export that shows only team compositions.
+ * 
+ * @param generatedTeams The list of generated teams with their assigned students.
+ * @param selectedSubjects The list of subjects considered during assignment.
+ * @param originalFileName The name of the original uploaded file (optional).
+ * @returns A Blob representing the generated Excel file with only team data.
+ */
+export function exportTeamsOnlyToExcel(
+    generatedTeams: Team[],
+    selectedSubjects: string[],
+    originalFileName: string | null
+): Blob {
+    if (generatedTeams.length === 0) {
+        throw new Error("No hay equipos para exportar.");
+    }
+
+    try {
+        const wb = XLSX.utils.book_new();
+
+        // --- Sheet: Equipos Generados ---
+        const teamsData: any[] = [
+            ["Equipo", "ID", "Nombre completo", "Correo electrónico", "Materias y grupos"]
+        ];
+
+        generatedTeams.sort((a, b) => a.id - b.id).forEach(team => {
+            // Add team header row
+            teamsData.push([
+                `Equipo ${team.id}`,
+                "",
+                "",
+                "",
+                `${team.students.length} estudiante${team.students.length !== 1 ? 's' : ''}`
+            ]);
+
+            // Add students in the team
+            team.students.sort((a, b) => 
+                String(a['Nombre completo']).localeCompare(String(b['Nombre completo']))
+            ).forEach(student => {
+                const materiasStr = student.Materias
+                    .map(sg => `${sg.subject} (${sg.group})`)
+                    .join(", ");
+
+                teamsData.push([
+                    "",
+                    student.ID,
+                    student['Nombre completo'],
+                    student['Correo electrónico'],
+                    materiasStr
+                ]);
+            });
+
+            // Add empty row between teams
+            teamsData.push(["", "", "", "", ""]);
+        });
+
+        const wsTeams = XLSX.utils.aoa_to_sheet(teamsData);
+        
+        // Set column widths
+        wsTeams['!cols'] = [
+            { wch: 12 },  // Equipo
+            { wch: 12 },  // ID
+            { wch: 30 },  // Nombre completo
+            { wch: 35 },  // Correo electrónico
+            { wch: 60 }   // Materias y grupos
+        ];
+
+        XLSX.utils.book_append_sheet(wb, wsTeams, "Equipos");
+
+        // --- Generate Blob ---
+        const baseFileName = originalFileName ? originalFileName.replace(/\.xlsx?$/, '') : 'equipos';
+        const outputFileName = `${baseFileName}_equipos.xlsx`;
 
         const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
         return new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

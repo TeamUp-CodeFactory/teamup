@@ -1,23 +1,43 @@
 import type { Student, Team } from '@/types';
+import { wouldCreateCourseConflict } from './utils';
+
+/**
+ * Checks if a student can be safely assigned to a team without creating course conflicts.
+ * @param student - The student to check.
+ * @param team - The team to check.
+ * @returns True if the student can be assigned without conflicts.
+ */
+export const canAssignStudentToTeam = (student: Student, team: Team): boolean => {
+    return !wouldCreateCourseConflict(team, student);
+};
 
 /**
  * Assigns a student to a team and updates the team's subject group commitments.
+ * This function now enforces course compatibility (same subject must have same group).
  * @param student - The student being assigned.
  * @param team - The team the student is being assigned to.
  * @param teamSubjectGroupCommitment - A map tracking the subject group commitments for each team.
  * @param selectedSubjects - The subjects relevant to the allocation, used to determine if a commitment should be made.
+ * @returns True if assignment was successful, false if it would create conflicts.
  */
 export const assignStudent = (
     student: Student,
     team: Team,
     teamSubjectGroupCommitment: Map<number, Map<string, string>>,
     selectedSubjects: string[] // Pass selectedSubjects
-) => {
+): boolean => {
+    // Check for course conflicts BEFORE assigning
+    if (wouldCreateCourseConflict(team, student)) {
+        console.warn(`Cannot assign student ${student['Nombre completo']} to team ${team.id}: would create course conflicts.`);
+        return false;
+    }
+
     // Ensure the student isn't already in the team (safety check).
     if (team.students.some(s => s.ID === student.ID)) {
         console.warn(`Attempted to assign student ${student.ID} to team ${team.id} multiple times.`);
-        return;
+        return false;
     }
+    
     // Add the student to the team.
     team.students.push(student);
 
@@ -30,21 +50,23 @@ export const assignStudent = (
     const teamCommitments = teamSubjectGroupCommitment.get(team.id)!;
 
     student.Materias.forEach(sg => {
-        // Only commit if the subject is selected y no commitment exists yet.
-        if (selectedSubjects.includes(sg.subject) && !teamCommitments.has(sg.subject)) {
-            // Double-check no conflicting student exists before committing.
-            const hasExistingConflict = team.students.some(s =>
-                s.ID !== student.ID &&
-                s.Materias.some(esg => esg.subject === sg.subject && esg.group !== sg.group)
-            );
-
-            if (!hasExistingConflict) {
+        // Only commit if the subject is selected
+        if (selectedSubjects.includes(sg.subject)) {
+            // Since we already verified no conflicts exist, we can safely set the commitment
+            if (!teamCommitments.has(sg.subject)) {
                 teamCommitments.set(sg.subject, sg.group);
-            } else {
-                console.warn(`Assigning ${student['Nombre completo']} to Team ${team.id} but conflict for ${sg.subject} already exists. Commitment not set for this subject.`);
+            }
+            // If commitment already exists, it should match (due to our conflict check)
+            else if (teamCommitments.get(sg.subject) !== sg.group) {
+                console.error(`Unexpected: assignment would create conflict for ${sg.subject} in team ${team.id}`);
+                // This should never happen due to our pre-check, but let's be safe
+                team.students.pop(); // Remove the student we just added
+                return false;
             }
         }
     });
+
+    return true;
 };
 
 /**
