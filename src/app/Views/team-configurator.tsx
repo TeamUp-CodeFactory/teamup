@@ -5,17 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Settings, Upload, FileUp, Pencil, Trash2, Plus } from "lucide-react";
+import { Settings, Upload, FileUp, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { useTeamBuilder } from '@/hooks/use-team-builder';
+import { useTeamBuilder, Role } from '@/hooks/use-team-builder';
 import { Toaster } from "@/components/ui/toaster";
-
-interface Role {
-  id: number;
-  name: string;
-  subjects: string[];
-  minStudents?: number;
-}
 
 interface TeamConfiguratorProps {
   teamBuilderState: ReturnType<typeof useTeamBuilder>;
@@ -32,6 +25,9 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
     error,
     minMode,
     individualMinStudents,
+    roles,
+    activeTab,
+    setActiveTab,
     handleFileUpload,
     handleAssignTeams,
     handleClearData,
@@ -40,40 +36,26 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
     handleIndividualMinChange,
     handleGlobalMinChange,
     setMinMode,
+    handleAddRole,
+    handleDeleteRole,
   } = teamBuilderState;
 
-  const [activeTab, setActiveTab] = useState<"roles" | "subjects">("roles");
-  const [roles, setRoles] = useState<Role[]>([]);
+  // Estados locales solo para el formulario de roles
   const [currentRoleName, setCurrentRoleName] = useState("");
   const [currentRoleSubjects, setCurrentRoleSubjects] = useState<string[]>([]);
   const [currentRoleMinStudents, setCurrentRoleMinStudents] = useState<number | undefined>(undefined);
   const [editingRoleId, setEditingRoleId] = useState<number | null>(null);
 
-  const handleAddRole = () => {
+  const handleSaveRole = () => {
     if (!currentRoleName.trim()) return;
     
-    if (editingRoleId !== null) {
-      // Modo edición: actualizar el rol existente
-      setRoles(roles.map(role => 
-        role.id === editingRoleId 
-          ? { ...role, name: currentRoleName, subjects: currentRoleSubjects, minStudents: currentRoleMinStudents }
-          : role
-      ));
-      setEditingRoleId(null);
-    } else {
-      // Modo agregar: crear nuevo rol
-      const newRole: Role = {
-        id: roles.length > 0 ? Math.max(...roles.map(r => r.id)) + 1 : 1,
-        name: currentRoleName,
-        subjects: currentRoleSubjects,
-        minStudents: currentRoleMinStudents,
-      };
-      setRoles([...roles, newRole]);
-    }
+    handleAddRole(currentRoleName, currentRoleSubjects, currentRoleMinStudents, editingRoleId);
     
+    // Limpiar formulario
     setCurrentRoleName("");
     setCurrentRoleSubjects([]);
     setCurrentRoleMinStudents(undefined);
+    setEditingRoleId(null);
   };
 
   const handleEditRole = (role: Role) => {
@@ -90,8 +72,8 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
     setCurrentRoleMinStudents(undefined);
   };
 
-  const handleDeleteRole = (id: number) => {
-    setRoles(roles.filter((role) => role.id !== id));
+  const handleDeleteRoleLocal = (id: number) => {
+    handleDeleteRole(id);
     // Si estamos editando el rol que se está borrando, cancelar la edición
     if (editingRoleId === id) {
       handleCancelEdit();
@@ -105,6 +87,19 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
       setCurrentRoleSubjects([...currentRoleSubjects, subject]);
     }
   };
+
+  // Calcular materias disponibles (excluir las ya asignadas a otros roles)
+  const getAvailableSubjects = () => {
+    // Obtener todas las materias asignadas a roles existentes, excepto el rol que se está editando
+    const assignedSubjects = roles
+      .filter(role => role.id !== editingRoleId) // Excluir el rol actual si se está editando
+      .flatMap(role => role.subjects);
+    
+    // Retornar solo las materias que no están asignadas
+    return allSubjectsFromFile.filter(subject => !assignedSubjects.includes(subject));
+  };
+
+  const availableSubjects = getAvailableSubjects();
 
   return (
     <div className="w-full min-h-screen bg-figma-surface">
@@ -185,34 +180,46 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
                 <h3 className="text-xl font-medium text-figma-text">Cargar estudiantes</h3>
               </div>
               
-              <Label 
-                htmlFor="file-upload-config" 
-                className="block w-full rounded border border-dashed border-gray-300 bg-white text-center text-sm text-muted-foreground py-2 px-2 cursor-pointer hover:border-figma-primary transition-colors"
-              >
-                Cargar archivo
-                <Input
-                  id="file-upload-config"
-                  type="file"
-                  accept=".xlsx"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </Label>
-              
-              <p className="text-xs text-muted-foreground text-right">
-                {fileName || "Carga un archivo en formato .XLSX"}
-              </p>
-              
-              {fileName && (
-                <Button 
-                  onClick={handleClearData}
-                  variant="outline"
-                  size="sm"
-                  className="border-red-500 text-red-500 hover:bg-red-50 h-8"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Limpiar datos
-                </Button>
+              {!fileName ? (
+                <>
+                  <Label 
+                    htmlFor="file-upload-config" 
+                    className="block w-full rounded border border-dashed border-gray-300 bg-white text-center text-sm text-muted-foreground py-2 px-2 cursor-pointer hover:border-figma-primary transition-colors"
+                  >
+                    Cargar archivo
+                    <Input
+                      id="file-upload-config"
+                      type="file"
+                      accept=".xlsx"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </Label>
+                  <p className="text-xs text-muted-foreground text-right">
+                    Carga un archivo en formato .XLSX
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="w-full rounded border border-figma-primary bg-figma-primary/5 text-center text-sm py-2 px-2">
+                    <div className="flex items-center justify-center gap-2">
+                      <FileUp className="w-4 h-4 text-figma-primary" />
+                      <span className="text-figma-text font-medium">{fileName}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-figma-primary text-right">
+                    Archivo cargado correctamente
+                  </p>
+                  <Button 
+                    onClick={handleClearData}
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500 text-red-500 hover:bg-red-50 h-8 w-full"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Limpiar datos
+                  </Button>
+                </>
               )}
             </CardContent>
           </Card>
@@ -257,14 +264,14 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
             </RadioGroup>
           </div>
 
-          {/* Mínimo de estudiantes por rol/materia */}
-          {activeTab === "roles" && minMode === "global" && (
+          {/* Mínimo de estudiantes por rol/materia - Global */}
+          {minMode === "global" && (
             <div className="space-y-2">
-              <Label htmlFor="min-students-role" className="text-sm font-medium text-figma-text">
-                Mínimo de estudiantes por rol
+              <Label htmlFor="min-students-global" className="text-sm font-medium text-figma-text">
+                Mínimo de estudiantes por {activeTab === "roles" ? "rol" : "materia"}
               </Label>
               <Input
-                id="min-students-role"
+                id="min-students-global"
                 type="number"
                 min="1"
                 value={minStudentsPerSubject}
@@ -273,7 +280,7 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
                 className="rounded bg-figma-muted-surface border-gray-400"
               />
               <p className="text-xs text-muted-foreground">
-                Cada equipo intentará incluir mínimo esta cantidad de estudiantes por rol.
+                Cada equipo intentará incluir mínimo esta cantidad de estudiantes por {activeTab === "roles" ? "rol" : "materia"}.
               </p>
             </div>
           )}
@@ -314,7 +321,7 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
                       <Pencil className="w-5 h-5 text-figma-primary" />
                     </button>
                     <button 
-                      onClick={() => handleDeleteRole(role.id)}
+                      onClick={() => handleDeleteRoleLocal(role.id)}
                       className="w-12 h-12 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors"
                       title="Eliminar rol"
                     >
@@ -372,9 +379,9 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
                 <p className="text-xs text-muted-foreground">
                   Estas materias se asignarán exclusivamente a este rol y no estarán disponibles para otras asignaciones.
                 </p>
-                {allSubjectsFromFile.length > 0 ? (
+                {availableSubjects.length > 0 ? (
                   <div className="space-y-2">
-                    {allSubjectsFromFile.map((subject) => (
+                    {availableSubjects.map((subject) => (
                       <div key={subject} className="flex items-center space-x-2">
                         <input
                           type="checkbox"
@@ -394,7 +401,9 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground text-center py-4">
-                    No hay materias disponibles. Carga un archivo primero.
+                    {allSubjectsFromFile.length === 0 
+                      ? "No hay materias disponibles. Carga un archivo primero."
+                      : "Todas las materias ya han sido asignadas a otros roles."}
                   </p>
                 )}
               </div>
@@ -422,8 +431,8 @@ export function TeamConfigurator({ teamBuilderState }: TeamConfiguratorProps) {
 
               {/* Botón Guardar */}
               <Button 
-                onClick={handleAddRole}
-                disabled={!currentRoleName.trim()}
+                onClick={handleSaveRole}
+                disabled={!currentRoleName.trim() || currentRoleSubjects.length === 0}
                 className="bg-figma-primary hover:bg-figma-primary/90 text-white h-8"
               >
                 <Upload className="w-4 h-4 mr-2" />
