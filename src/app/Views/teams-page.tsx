@@ -21,7 +21,7 @@ interface TeamsPageProps {
 }
 
 export function TeamsPage({ teamBuilderState }: TeamsPageProps) {
-  const { generatedTeams, selectedSubjects, handleExport } = teamBuilderState;
+  const { generatedTeams, selectedSubjects, handleExport, activeTab, roles } = teamBuilderState;
   const [openTeams, setOpenTeams] = useState<Record<number, boolean>>({
     1: true, // Primera equipo abierto por defecto
   });
@@ -78,22 +78,37 @@ export function TeamsPage({ teamBuilderState }: TeamsPageProps) {
 
   const allSubjects = getAllSubjects();
 
-  // Contar roles por equipo (basado en materias seleccionadas)
+  // Contar roles o materias por equipo según el modo de generación
   const getRoleCountsForTeam = (teamId: number) => {
     const team = filteredTeams.find(t => t.id === teamId);
     if (!team) return {};
 
-    const roleCounts: Record<string, { count: number; required: number }> = {};
+    const counts: Record<string, { count: number; required: number }> = {};
     
-    // Solo contar las materias que fueron seleccionadas
-    selectedSubjects.forEach(subject => {
-      const count = team.students.filter(student => 
-        student.Materias.some(m => m.subject === subject)
-      ).length;
-      roleCounts[subject] = { count, required: 2 }; // Por ahora hardcoded a 2
-    });
+    if (activeTab === 'roles') {
+      // Contar por roles
+      roles.forEach(role => {
+        const count = team.students.filter(student => 
+          role.subjects.some(subject => 
+            student.Materias.some(m => m.subject === subject)
+          )
+        ).length;
+        counts[role.name] = { 
+          count, 
+          required: role.minStudents || 2 
+        };
+      });
+    } else {
+      // Contar por materias (comportamiento original)
+      selectedSubjects.forEach(subject => {
+        const count = team.students.filter(student => 
+          student.Materias.some(m => m.subject === subject)
+        ).length;
+        counts[subject] = { count, required: 2 }; // Por ahora hardcoded a 2
+      });
+    }
 
-    return roleCounts;
+    return counts;
   };
 
   return (

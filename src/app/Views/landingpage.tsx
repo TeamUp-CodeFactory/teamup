@@ -47,9 +47,6 @@ export default function Landingpage({ teamBuilderState }: LandingPageProps) {
             <StudentUploader fileName={fileName} handleFileUpload={handleFileUpload}/>
           </div>
         )}
-        <footer className="py-6 text-center text-sm text-muted-foreground mt-8">
-          Copyright © 2025 Julian Vanegas López
-        </footer>
       </div>
       </main>
     </div>

@@ -8,6 +8,14 @@ import { exportTeamsToExcel, exportTeamsOnlyToExcel } from '@/lib/file_managemen
 import { allocateTeams } from '@/lib/teams/allocator';
 import { getConfiguredSubjectMinimum } from '@/lib/teams/utils';
 
+// Interface para roles - exportada para uso en componentes
+export interface Role {
+  id: number;
+  name: string;
+  subjects: string[];
+  minStudents?: number;
+}
+
 /**
  * Hook personalizado (`useTeamBuilder`)
  *
@@ -32,6 +40,10 @@ export const useTeamBuilder = () => {
   const [warnings, setWarnings] = useState<AssignmentWarning[]>([]);
   const [minMode, setMinMode] = useState<MinStudentMode>('global');
   const [individualMinStudents, setIndividualMinStudents] = useState<Record<string, number>>({});
+  
+  // Estado para roles
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [activeTab, setActiveTab] = useState<"roles" | "subjects">("roles");
   
   // Hook de un tercero para mostrar notificaciones (toasts)
   const { toast } = useToast();
@@ -310,6 +322,47 @@ export const useTeamBuilder = () => {
   }, [generatedTeams, selectedSubjects, fileName, toast]);
 
   // =================================================================
+  // 3.5 MANEJADORES DE ROLES
+  // Funciones para gestionar roles en la configuración
+  // =================================================================
+  
+  const handleAddRole = useCallback((roleName: string, roleSubjects: string[], roleMinStudents?: number, editingRoleId?: number | null) => {
+    if (!roleName.trim()) return;
+    
+    if (editingRoleId !== null && editingRoleId !== undefined) {
+      // Modo edición: actualizar el rol existente
+      setRoles(prevRoles => prevRoles.map(role => 
+        role.id === editingRoleId 
+          ? { ...role, name: roleName, subjects: roleSubjects, minStudents: roleMinStudents }
+          : role
+      ));
+    } else {
+      // Modo agregar: crear nuevo rol
+      const newRole: Role = {
+        id: roles.length > 0 ? Math.max(...roles.map(r => r.id)) + 1 : 1,
+        name: roleName,
+        subjects: roleSubjects,
+        minStudents: roleMinStudents,
+      };
+      setRoles(prevRoles => [...prevRoles, newRole]);
+    }
+    
+    // Limpiar equipos generados
+    setGeneratedTeams([]);
+    setWarnings([]);
+    setError(null);
+  }, [roles.length]);
+
+  const handleDeleteRole = useCallback((id: number) => {
+    setRoles(prevRoles => prevRoles.filter((role) => role.id !== id));
+    
+    // Limpiar equipos generados
+    setGeneratedTeams([]);
+    setWarnings([]);
+    setError(null);
+  }, []);
+
+  // =================================================================
   // 4. VALORES DE RETORNO (RETURN VALUES)
   // El hook devuelve un objeto con todos los estados y funciones que
   // el componente de la UI necesita para leer datos y ejecutar acciones.
@@ -330,6 +383,12 @@ export const useTeamBuilder = () => {
     unassignedStudents,
     hasStudents,
     hasTeams,
+    
+    // Estado para roles y tabs
+    roles,
+    activeTab,
+    setActiveTab,
+    setRoles,
 
     // Funciones (setters y handlers)
     toast,
@@ -346,5 +405,9 @@ export const useTeamBuilder = () => {
     handleGlobalMinChange,
     handleExport,
     handleExportTeamsOnly,
+    
+    // Funciones de roles
+    handleAddRole,
+    handleDeleteRole,
   };
 };
