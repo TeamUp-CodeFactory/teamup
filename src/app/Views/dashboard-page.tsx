@@ -467,7 +467,7 @@ export function DashboardPage({ teamBuilderState }: DashboardPageProps) {
               className="bg-figma-primary hover:bg-figma-primary-variant text-white"
             >
               <FileDown className="w-4 h-4 mr-2" />
-              Exportar a PDF
+              Exportar
             </Button>
           )}
         </div>
